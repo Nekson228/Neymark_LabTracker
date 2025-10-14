@@ -27,3 +27,4 @@ dmypy.json
 *.aux
 *.log
 *.pdf
+filled_template.tex
