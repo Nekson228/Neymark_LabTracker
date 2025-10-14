@@ -29,3 +29,4 @@ dmypy.json
 *.pdf
 filled_template*.tex
 src/synth/data/
+data.zip
