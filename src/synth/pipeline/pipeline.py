@@ -1,8 +1,9 @@
 import json
 import random
 import subprocess
-
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
+from uuid import uuid4
 
 import fitz
 from jinja2 import Template
@@ -12,79 +13,90 @@ from PIL import Image
 from src.synth.generator import generate_report
 from src.synth.pipeline.augmentation import create_augmentations
 
-N = 100  # Number of samples to generate
+N = 10_000  # Number of samples to generate
+MAX_WORKERS = 8
 
 LATEX_PATH = Path("src/synth/latex")
 TEMPLATE_PATH = LATEX_PATH / "template.tex"
-RESULT_PATH = LATEX_PATH / "filled_template.tex"
-PDF_PATH = LATEX_PATH / "filled_template.pdf"
-
 DATASET_PATH = Path("src/synth/data")
 IMAGES_PATH = DATASET_PATH / "images"
 
 
-def generate_pdf(template_path: Path, result_path: Path) -> tuple[dict, str]:
-    with open(template_path, "r") as template_file:
-        template = Template(template_file.read())
+def generate_pdf_instance(template_str: str, idx: int) -> dict:
+    """
+    Generate a single PDF, render it as image, apply augmentation.
+    Returns metadata + text + paths.
+    """
+    result_path = LATEX_PATH / f"filled_template_{idx}.tex"
+    pdf_path = LATEX_PATH / f"filled_template_{idx}.pdf"
 
+    template = Template(template_str)
     report = generate_report()
 
-    with open(result_path, "w") as result_file:
-        result_file.write(template.render(**report.to_dict()))
+    with open(result_path, "w") as f:
+        f.write(template.render(**report.to_dict()))
 
-    subprocess.run(["xelatex", f"--output-directory={LATEX_PATH}", result_path], check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                   )
+    # Run XeLaTeX
+    subprocess.run(
+        ["xelatex", f"--output-directory={LATEX_PATH}", result_path],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
-    with fitz.open(PDF_PATH) as doc:
+    # Extract text
+    with fitz.open(pdf_path) as doc:
         if len(doc) > 1:
             raise ValueError("Generated PDF has more than one page.")
         page = doc[0]
-        text = str(page.get_text()).replace('\n', ' ')
+        text = str(page.get_text()).replace("\n", " ")
 
-    return report.get_metadata(), text
+        mat = fitz.Matrix(3, 3)
+        pix = page.get_pixmap(matrix=mat)
 
-def pdf_to_image(source_pdf: Path, output_image: Path, zoom: int = 3) -> None:
-    doc = fitz.open(source_pdf)
-    page = doc[0]
-    mat = fitz.Matrix(zoom, zoom)
-    pix = page.get_pixmap(matrix=mat)
-    pix.save(output_image)
+    sample_path = IMAGES_PATH / f"{idx:05d}.png"
+    pix.save(sample_path)
 
-
-def create_augmentation(input_image_path: str, output_image_path: str) -> str:
+    # Augment image
     augmentations = create_augmentations()
     aug = random.choice(augmentations)
-    input_image = Image.open(input_image_path).convert('RGB')
-    augmented_image = aug['transform'](input_image)
-    augmented_image.save(output_image_path)
+    input_image = Image.open(sample_path).convert("RGB")
+    augmented_image = aug["transform"](input_image)
 
-    return aug['name']
+    aug_sample_path = IMAGES_PATH / f"{idx:05d}_aug.png"
+    augmented_image.save(aug_sample_path)
+
+    return {
+        **report.get_metadata(),
+        "text": text,
+        "image_path": str(sample_path),
+        "aug_image_path": str(aug_sample_path),
+        "aug_name": aug["name"],
+    }
 
 
 def main():
     DATASET_PATH.mkdir(parents=True, exist_ok=True)
     IMAGES_PATH.mkdir(parents=True, exist_ok=True)
 
-    all_data = []
-    for i in tqdm(range(N)):
-        try:
-            metadata, text = generate_pdf(TEMPLATE_PATH, RESULT_PATH)
-        except ValueError:
-            print("Regenerating due to multi-page PDF...")
-            metadata, text = generate_pdf(TEMPLATE_PATH, RESULT_PATH)
-        sample_path = IMAGES_PATH / f"{i:05d}.png"
-        aug_sample_path = IMAGES_PATH / f"{i:05d}_aug.png"
-        pdf_to_image(PDF_PATH, sample_path)
-        aug_name = create_augmentation(str(sample_path), str(aug_sample_path))
+    with open(TEMPLATE_PATH, "r") as f:
+        template_str = f.read()
 
-        all_data.append({**metadata, 
-                         "text": text, "image_path": str(sample_path), 
-                         "aug_image_path": str(aug_sample_path), "aug_name": aug_name})
+    results = []
 
+    with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = [executor.submit(generate_pdf_instance, template_str, i) for i in range(N)]
 
-    with open(DATASET_PATH / "data.json", "w") as json_file:
-        json.dump(all_data, json_file, ensure_ascii=False, indent=4)
+        for future in tqdm(as_completed(futures), total=N, desc="Generating dataset"):
+            try:
+                results.append(future.result())
+            except ValueError:
+                continue  # Skip invalid PDFs
+            except Exception as e:
+                print(f"Error: {e}")
+
+    with open(DATASET_PATH / "data.json", "w") as f:
+        json.dump(results, f, ensure_ascii=False, indent=4)
 
 
 if __name__ == "__main__":
