@@ -23,3 +23,7 @@ venv.bak/
 dmypy.json
 
 .idea/
+
+*.aux
+*.log
+*.pdf
