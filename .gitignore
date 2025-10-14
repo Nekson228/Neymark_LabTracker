@@ -27,6 +27,5 @@ dmypy.json
 *.aux
 *.log
 *.pdf
-filled_template.tex
-
+filled_template*.tex
 src/synth/data/
