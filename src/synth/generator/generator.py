@@ -35,6 +35,7 @@ class ReportData:
     main_font: str
     row_separator: bool
     font_size: int
+    landscape: bool
 
     def to_dict(self) -> dict[str, Any]:
         """Convert dataclass (with nested rows) to plain dict for templating."""
@@ -48,6 +49,8 @@ class ReportData:
             "font": self.main_font,
             "font_size": self.font_size,
             "row_separator": self.row_separator,
+            "landscape": self.landscape,
+            "num_rows": len(self.analyses),
         }
 
 
@@ -121,7 +124,8 @@ def generate_report() -> ReportData:
     """Generate one full report record."""
     gender = random.choice(["Муж", "Жен"])
     name = fake.name_male() if gender == "Муж" else fake.name_female()
-    num_rows = fake.random_int(min=5, max=10)
+    landscape = fake.boolean(chance_of_getting_true=30)
+    num_rows = fake.random_int(min=3, max=10 if not landscape else 5)
 
     base_date = fake.date_time_between(start_date='-30d', end_date='now')
     taken = base_date - timedelta(days=fake.random_int(min=0, max=5))
@@ -150,4 +154,5 @@ def generate_report() -> ReportData:
         main_font=random.choice(FONTS), 
         row_separator=fake.boolean(chance_of_getting_true=70),
         font_size=random.choice(FONT_SIZES),
+        landscape=landscape,
     )
