@@ -12,7 +12,7 @@ from PIL import Image
 from src.synth.generator import generate_report
 from src.synth.pipeline.augmentation import create_augmentations
 
-N = 10
+N = 100  # Number of samples to generate
 
 LATEX_PATH = Path("src/synth/latex")
 TEMPLATE_PATH = LATEX_PATH / "template.tex"
@@ -32,10 +32,13 @@ def generate_pdf(template_path: Path, result_path: Path) -> tuple[dict, str]:
     with open(result_path, "w") as result_file:
         result_file.write(template.render(**report.to_dict()))
 
-    subprocess.run(["xelatex", f"--output-directory={LATEX_PATH}", result_path], check=True,     
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(["xelatex", f"--output-directory={LATEX_PATH}", result_path], check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                   )
 
     with fitz.open(PDF_PATH) as doc:
+        if len(doc) > 1:
+            raise ValueError("Generated PDF has more than one page.")
         page = doc[0]
         text = str(page.get_text()).replace('\n', ' ')
 
@@ -65,7 +68,11 @@ def main():
 
     all_data = []
     for i in tqdm(range(N)):
-        metadata, text = generate_pdf(TEMPLATE_PATH, RESULT_PATH)
+        try:
+            metadata, text = generate_pdf(TEMPLATE_PATH, RESULT_PATH)
+        except ValueError:
+            print("Regenerating due to multi-page PDF...")
+            metadata, text = generate_pdf(TEMPLATE_PATH, RESULT_PATH)
         sample_path = IMAGES_PATH / f"{i:05d}.png"
         aug_sample_path = IMAGES_PATH / f"{i:05d}_aug.png"
         pdf_to_image(PDF_PATH, sample_path)
