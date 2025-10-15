@@ -23,3 +23,6 @@ venv.bak/
 dmypy.json
 
 .idea/
+
+data.zip
+src/synth/data
